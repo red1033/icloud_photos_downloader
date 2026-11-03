@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 mkdir -p dist
-rm -f dist/*
-python3 setup.py bdist_wheel --universal
+rm -fr dist/*
+python3 -m pip wheel . -w dist --no-deps --no-build-isolation

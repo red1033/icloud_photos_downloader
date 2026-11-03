@@ -1,6 +1,429 @@
-# Changelog
+# Change log
 
 ## Unreleased
+
+## 1.33.0 (2026-11-03)
+
+- feat: add explicit one-time `--prune-orphans-adopt-existing` to bootstrap dedicated flat, original-size shared-library mirrors; current filenames are retained regardless of size changes, and unmatched media is quarantined [#1350](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1350)
+- feat: add opt-in `--prune-orphans` for shared libraries, moving only unchanged tracked downloads to a recoverable quarantine when their photos disappear; existing untracked files are preserved and pruning problems warn without failing downloads [#1350](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1350)
+- feat: sign in with a security key (FIDO, e.g. YubiKey) on accounts that use them instead of six-digit codes [#583](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/583)
+- fix: `--skip-created-before`/`--skip-created-after` dates are read in the same time zone icloudpd uses for folders and EXIF dates; they used the system clock's zone, which differs on Windows when `TZ` is set
+- fix: reject `--skip-created-before` later than `--skip-created-after` instead of silently skipping all assets [#1370](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1370)
+- fix: executables always exit with code 0, even after errors [#1372](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1372)
+- fix: the `macos-amd64` binary in 1.32.3 was built for Apple Silicon and didn't run on Intel Macs (`bad CPU type in executable`), and the macOS wheel and npm `darwin-x64` package contained the same binary; the macOS binaries are now built on Apple Silicon (`macos-arm64`, new) and Intel (`macos-amd64`), each wheel and npm package gets the matching one [#1352](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1352)
+- fix: `icloud` and `icloudpd` crashed with `ZoneInfoNotFoundError` on systems without a time zone database (e.g. minimal containers such as `ubuntu:xenial`); the time zone data is now included through the `tzdata` package [#1400](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1400)
+- fix: when iCloud's photo listing ended early (an empty page before the end), the run still ended with "All photos and videos have been downloaded"; the number of listed items is now compared with the count iCloud reports, and a shorter listing is reported as an error with exit code 1 [#1390](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1390)
+- fix: assets sharing one original (e.g. created with Photos' "Duplicate") were skipped while their neighbour was listed twice, so the download count did not match iCloud's [#1393](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1393)
+- fix: with `--set-exif-datetime`, a JPEG that got its date written was downloaded a second time on the next run as `IMG_1234-<size>.JPG`, because writing the date made it slightly larger than in iCloud; a file that is at most 1 KB larger and holds exactly the date icloudpd would write is now recognised as the same photo [#380](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/380)
+- fix: retry the library indexing state check before failing with "Apple iCloud Photo Library has not finished indexing yet" [#1387](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1387)
+- fix: the `Date` header of the 2FA expiry email wasn't valid (`31/01/2026 08:00`, no time zone), so mail clients could sort it under the wrong date; it is now an RFC 5322 date such as `Sat, 31 Jan 2026 08:00:00 +0000`
+- fix: `--live-photo-size thumb` stopped icloudpd at startup with `ValueError: 'thumb' is not a valid LivePhotoVersionSize`; it now downloads the small Live Photo video, named with a `-thumb` suffix
+- fix: `KeyError: 'dsInfo'` when the saved session is no longer valid and no password is available; icloudpd now reports a login error and exits with code 1 [#1363](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1363)
+- fix: `--cookie-directory` pointing into a folder that doesn't exist yet (e.g. `~/icloudpd/cookies` without `~/icloudpd`) failed with `FileNotFoundError`; the missing folders are now created
+- fix: the `icloud` tool crashed with `KeyringLocked` when the system keyring is locked or unavailable; it now warns and asks for the password, like `icloudpd` since [#1032](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1032)
+- fix: the `icloud` tool asked for a 2FA code without telling Apple to send one, so no code arrived on trusted devices; it now triggers the push like `icloudpd` [#1366](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1366)
+- fix: a locked or unavailable system keyring (e.g. on a headless Linux machine) crashed login with `KeyringLocked`; icloudpd now logs a warning and tries the next password provider [#1032](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1032)
+- fix: `--xmp-sidecar` stopped the whole run when an asset had adjustment, keyword or location data in an unexpected format (`zlib.error`, `JSONDecodeError`, `InvalidFileException`); such fields are now left out of the sidecar, and any other sidecar error is logged as a warning [#1063](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1063) [#1056](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1056) [#1277](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1277)
+- fix: `--set-exif-datetime` stopped the whole run when a downloaded JPEG had a truncated or malformed EXIF block (`struct.error` from piexif); such files are now skipped for EXIF, like other unreadable EXIF data [#1431](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1431)
+- fix: `--set-exif-datetime` never wrote the `DateTime` tag: it was put in the thumbnail IFD, which is dropped when there is no thumbnail; it now goes in the main IFD, next to `DateTimeOriginal` and `DateTimeDigitized`, which were already written
+- fix: a download that stopped halfway (e.g. a dropped connection on a large video) was saved cut off and without an error, and never downloaded again; the rest is now requested from where it stopped, and if that fails the partial file is kept as `.part` and resumed on the next run [#1311](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1311)
+- fix: a download that couldn't connect to iCloud (`Cannot connect to Apple iCloud service`) ended the whole run; that file is now skipped with an error and the run continues, and it is downloaded again on the next run
+- fix: `--list-albums` and `--album` missed albums when iCloud returned the album list in more than one page; the following pages are now fetched too
+- feat: albums in folders are listed by `--list-albums` and can be downloaded with `--album`, named by their path, e.g. `--album "Trips/2024/Italy"`; folders themselves are no longer listed as albums, since selecting one downloaded nothing [#482](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/482) [#1071](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1071)
+- fix: JPEG XL photos (and other image types icloudpd didn't know, such as WebP, GIF, TIFF and AVIF) were treated as videos, so `--skip-videos` skipped them and `--skip-photos` downloaded them [#1385](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1385)
+- fix: with `--file-match-policy name-id7`, the `-adjusted` and `-alternative` files didn't get the id suffix, so assets with the same name (e.g. two `IMG_1234.JPG` from different cameras) wrote to the same `IMG_1234-adjusted.JPG`; they are now named like `IMG_1234_QVpTNGN-adjusted.JPG`. The same applies to names with non-ASCII characters, which now get the same cleaning as the original. Existing adjusted and alternative files keep their old name, and the new name is downloaded once [#1249](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1249)
+- fix: `--auto-delete` looked for local files without the file match policy and filename cleaner, so with `--file-match-policy name-id7` (or names with non-ASCII characters) it didn't delete the local copies of photos deleted in iCloud
+- fix: `--auto-delete` combined with `--keep-icloud-recent-days` deleted the local copies of the assets `--keep-icloud-recent-days` had just moved to Recently Deleted; the combination is now rejected, like `--delete-after-download` with `--keep-icloud-recent-days` [#1272](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1272)
+- chore: update dependencies, including urllib3 1.26 → 2.8 and requests 2.34
+- fix: `--use-os-locale` crashed with `locale.Error: unsupported locale setting` when `LANG`/`LC_ALL` names a locale that isn't installed; icloudpd now warns and continues with the default locale [#1400](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1400)
+- chore: run the npx (apt) and npm/npx (apk) compatibility tests for arm64 and arm/v7 on Arm runners; on x64 runners their Arm containers couldn't start, so the compatibility table reported them as failing without testing them [#1400](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1400)
+- chore: run the Linux compatibility tests as one job per test kind and architecture (376 → 73 jobs per full build) and move CI to ubuntu-24.04; see [.github/workflows/README.md](.github/workflows/README.md)
+- chore: compatibility report: skip images that only exist for another platform instead of reporting them as failing, stop testing the musl binary on glibc distributions (it can't run there), and include the time zone and locale table in the release notes [#1400](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1400)
+- chore: the compatibility tests now cover the releases that still get free security updates, plus a year of grace after that ends: Debian 11 (binary only) to 13, Ubuntu 22.04–26.04 and Alpine 3.20–3.24. Older, end-of-life releases are no longer tested [#1400](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1400)
+- chore: CI cancels superseded runs, has a timeout on every job, and generates only the test locales it needs instead of installing `locales-all`
+- fix: `--keep-icloud-recent-days` deleted photos from iCloud even when they failed to download, with `--only-print-filenames` when nothing was downloaded, or with `--force-size` when the size did not exist; photos are now only deleted when every requested file (including the live photo video) is present locally [#1312](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1312)
+- fix: warn at startup when `--keep-icloud-recent-days` is combined with `--recent` or `--until-found`, since assets the run doesn't reach are not deleted from iCloud
+- fix: the Web UI reopened the first user configuration and closed the others every time the status refreshed (every 5 seconds), so the other configurations couldn't be read; opened and closed panels now stay that way [#1282](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1282)
+- fix: `--keep-icloud-recent-days` deleted assets that have no creation date in iCloud, because their date fell back to 1970; they are now kept, with a warning
+- fix: when iCloud refused to delete a photo with `TRY_AGAIN_LATER` ("Sync zone CAS Op-Lock failed"), `--keep-icloud-recent-days` and `--delete-after-download` ended the whole run; that photo is now left in iCloud and the run continues [#1283](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1283)
+- fix: bump certifi to 2026.10.23; earlier versions bundle emSign root CAs with compromised intermediate keys ([GHSA-6q48-6c7w-9gw2](https://github.com/advisories/GHSA-6q48-6c7w-9gw2))
+- feature: support Python 3.14 and 3.15; drop Python 3.10, which reached end of life. Binaries and Docker images are built with Python 3.15
+- note: on Linux, photos dated before year 1000 now go into zero-padded year folders (e.g. `0005/01/01`), the same as on macOS and Windows
+- note: the musl binaries (and the musl wheels that contain them) need musl 1.2.5 or newer, i.e. Alpine 3.20+, since 1.32.3; this is now documented [#1400](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1400)
+- feat: add `--adp-web-access` to download from accounts with Advanced Data Protection (ADP) [#687](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/687) [#1024](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1024)
+
+## 1.32.3 (2026-05-29)
+
+- fix: restore 2FA for Apple's updated auth flow (2026+) [#1322]https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1322
+- fix: Update staticx to 0.14.2 with --no-build-isolation to resolve pkg_resources and SCons build failures on Python 3.13/Trixie
+- fix: Update Dockerfile.build-musl Alpine base from 3.19 to 3.23 to resolve Cargo lock file version 4 incompatibility
+
+## 1.32.2 (2025-09-01)
+
+- fix: HTTP response content not captured for authentication and non-streaming requests [#1240](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1240)
+- fix: `--only-print-filenames` downloads live photo video files during deduplication [#1220](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1220)
+
+## 1.32.1 (2025-08-30)
+
+- fix: KeyError when downloading photos with --size adjusted --size alternative options [#926](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/926)
+
+## 1.32.0 (2025-08-29)
+
+- feat: support multiple user configurations in single command [#1067](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1067) [#923](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/923)
+
+## 1.31.0 (2025-08-20)
+
+- fix: OOMing on large downloads [#1214](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1214)
+- feat: support downloading from multiple albums [#738](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/738) [#438](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/438)
+
+## 1.30.0 (2025-08-17)
+
+- feat: resume interrupted downloads [#968](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/968) [#793](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/793)
+- feat: add `--skip-photos` filter [#401](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/401) [#1206](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1206)
+
+## 1.29.4 (2025-08-12)
+
+- fix: failed auth terminate webui [#1195](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1195)
+- fix: disable raw password auth fallback [#1176](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1176)
+
+## 1.29.3 (2025-08-09)
+
+- debug: dump auth traffic in case of a failure [#1176](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1176)
+- fix: transfer chunk issues terminate with error [#1202](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1202)
+
+## 1.29.2 (2025-07-21)
+
+- fix: emulating old browser and client version fails authentication [#1073](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1073)
+
+## 1.29.1 (2025-07-20)
+
+- fix: retries trigger rate limiting [#1195](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1195)
+- fix: smtp & script notifications terminate the program [#898](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/898)
+
+## 1.29.0 (2025-07-19)
+
+- fix: connection errors reported with stack trace [#1187](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1187)
+- feat: `--skip-created-after` to limit assets by creation date [#466](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/466) [#1111](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1111)
+- fix: connecting to a non-activated iCloud service reported as an error
+- fix: 503 response reported as an error [#1188](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1188)
+
+## 1.28.2 (2025-07-06)
+
+- chore: bump min python version 3.9->3.10
+- fix: iCloud clean up with `--keep-icloud-recent-days` does not respect `--skip-*` params [#1180](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1180) 
+- chore: replace build & test platform from retired windows-2019 to windows-2025
+- Service Temporary Unavailable responses are less ambiguous [#1078](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1078)
+- feat: re-authenticate on errors when using `--watch-with-interval` [#1078](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1078)
+- feat: use stored cookies before attempting to authenticate with credentials
+
+## 1.28.1 (2025-06-08)
+
+- fix: UserWarning about obsoleted code [#1148](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1144) [#1142](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1148)
+
+## 1.28.0 (2025-06-02)
+
+- feat: `--skip-created-before` to limit assets by creation date [#466](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/466) [#1111](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1111)
+- bug: `--watch-with-interval` does not process updates from iCloud [#1144](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1144) [#1142](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1142)
+
+## 1.27.5 (2025-05-08)
+
+- fix: HEIF file extension [#1133](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1133)
+- fix: fix ignored photos with --delete-after-download or --keep-icloud-recent-days [#616](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/616)
+- fix: timeout set to 30 seconds for HTTP requests [#793](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/793)
+
+## 1.27.4 (2025-04-15)
+
+- fix: broken pypi publishing [#1105](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1105)
+
+## 1.27.3 (2025-04-14)
+
+- feature: the icloud email username is now included in the email about 2sa authentication failing, for when an installation is configured for multiple icloud accounts.
+
+## 1.27.2 (2025-03-29)
+
+- fix: dates prior 1970 do not work on non linux [#1045](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1045)
+
+## 1.27.1 (2025-03-16)
+
+- fix: disambiguate whole photo collection from the album with `All Photos` name [#1077](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1077)
+
+## 1.27.0 (2025-02-22)
+
+- feature: list and download from shared libraries for invitee [#947](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/947)
+
+## 1.26.1 (2025-01-23)
+
+- fix: XMP metadata with plist in XML format causes crash [#1059](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1059)
+- fix: missing 'isFavorite' in XMP metadata causes crash [#1058](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1058)
+- fix: crash when downloading files with `--xmp-sidecar` caused by files having non-JSON adjustment data. [#1056](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1056)
+
+## 1.26.0 (2025-01-13)
+
+- feature: add `--keep-icloud-recent-days` parameter to keep photos newer than this many days in iCloud. Deletes the rest. [#1046](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1046)
+
+## 1.25.1 (2024-12-28)
+
+- chore: bump max/default python version 3.12->3.13
+- chore: bump min python version 3.8->3.9
+- fix: fallback to old raw password auth if srp auth fails [#975](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/975)
+
+## 1.25.0 (2024-12-03)
+
+- fix: failed to authenticate for accounts with srp s2k_fo auth protocol [#975](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/975)
+- fix: failed to login non-2FA account for the first attempt [#1012](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1012)
+- fix: log more information for authentication error [#1010](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1010)
+- feature: add support for XMP files with `--xmp-sidecar` parameter [#448](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/448), [#102](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/102), [#789](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/789)
+
+## 1.24.4 (2024-11-18)
+
+- fix: deprecate macos-12 [#1000](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/1000)
+- fix: sms MFA dropping leading zeros [#993](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/993)
+
+## 1.24.3 (2024-11-03)
+
+- fix: crashes when no imagetype sent by Apple [ref](https://github.com/boredazfcuk/docker-icloudpd/issues/680)
+
+## 1.24.2 (2024-11-02)
+
+- fix: errors for accounts with salt started with zero byte [#975](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/975)
+
+## 1.24.1 (2024-10-28)
+
+- fix: accounts without 2fa are supported [#959](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/959)
+
+## 1.24.0 (2024-10-25)
+
+- fix: new AppleID auth with srp [#970](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/970)
+- feature: when ran without parameters, `icloudpd` shows help [#963](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/963)
+- fix: force_size should not skip subsequent sizes [#955](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/955)
+
+## 1.23.4 (2024-09-02)
+
+- fix: support plain text encoding for filename in addition to base64 [ref](https://github.com/boredazfcuk/docker-icloudpd/issues/641)
+
+## 1.23.3 (2024-09-01)
+
+- more debug added for parsing filenameEnc [#935](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/935) and [ref](https://github.com/boredazfcuk/docker-icloudpd/issues/641)
+
+## 1.23.2 (2024-08-31)
+
+- dump encoded filename in exception when there is an error in decoding it [#935](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/935) and [ref](https://github.com/boredazfcuk/docker-icloudpd/issues/641)
+
+## 1.23.1 (2024-08-22)
+
+- fix: use a-z for sms mfa index to disambiguate with mfa code with leading zeros [#925](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/925)
+- fix: report proper error on bad `--folder-structure` value [#937](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/937)
+
+## 1.23.0 (2024-07-25)
+
+- feature: update webui and allow to cancel and resume sync
+- deprecate linux 386 and arm v6 support
+- add linux musl builds
+
+## 1.22.0 (2024-07-12)
+
+- feature: support for using locale from OS with `--use-os-locale` flag [#897](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/897)
+- fix: swallow keyring errors [#871](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/871)
+
+## 1.21.0 (2024-07-05)
+
+- feature: add webui for entering password with `--password-provider webui` parameter [#805](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/805)
+- feature: add webui for entering MFA code with `--mfa-provider webui` parameter [#805](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/805)
+- fix: allow MFA with leading zeros [ref](https://github.com/boredazfcuk/docker-icloudpd/issues/599)
+
+## 1.20.4 (2024-06-30)
+
+- fix: SMS MFA [#803](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/803)
+
+## 1.20.3 (2024-06-29)
+
+- fix: release to PyPi [#883](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/883)
+
+## 1.20.2 (2024-06-28)
+
+- fix: match SMS MFA to icloud.com behavior [#803](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/803)
+
+## 1.20.1 (2024-06-18)
+
+- fix: keyring handling in `icloud` [#871](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/871)
+
+## 1.20.0 (2024-06-16)
+
+- feature: customize choice and the order of checking for password with `--password-provider` parameter
+- feature: support multiple file naming and de-deplication policies with `--file-match-policy` parameter. Rel to [#346](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/346)
+
+## 1.19.1 (2024-06-02)
+
+- fix: KeyError alternative [#859](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/859)
+
+## 1.19.0 (2024-05-31)
+
+- fix: release notes [#849](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/849)
+- fix: auto deletion when `--folder-structure` is set to `none` [#831](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/831)
+- fix: Apple/Adobe DNG raw photos are recognised as images [#662](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/662)
+- feature: support multiple `--size` parameter specifications in command line
+- fix: file extensions for non-original version matching type of the asset in the version
+- feature: support downloading adjusted files with `--size adjusted` parameter (portraits, edits, etc) with fallback to `original` [#769](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/769) [#704](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/704) [#350](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/350) [#249](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/249)
+- feature: support for CR2,CR3,CRW,ARW,RAF,RW2,NRF,PEF,NEF,ORF raw image formats [#675](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/675)
+- feature: support `--size alternative` for alternative originals, e.g. raw+jpeg, with fallback to `original` [#675](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/675)
+- feature: add `--align-raw` param to treat raw in raw+jpeg as original, alternative (jpeg+raw), or as-is, default to as-is
+
+## 1.18.0 (2024-05-27)
+
+- feature: add parameter `--live-photo-mov-filename-policy` to control naming of video portion of live photos with default `suffix` for compatibility [#500](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/500)
+- feature: add parameter `--keep-unicode-in-filenames` with default `false` for compatibility [#845](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/845)
+- fix: avoid parsing json from empty responses [#837](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/837)
+
+## 1.17.7 (2024-05-25)
+
+- fix: keyring exception [#841](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/841)
+- fix: delete iCloud asset in respective shared library [#802](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/802)
+
+## 1.17.6 (2024-05-23)
+
+- fix: missing exception [#836](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/836)
+
+## 1.17.5 (2024-04-27)
+
+- experimental: fix errors in npm packages
+- fix: allow calls for trusted devices to fail silently [#819](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/819)
+
+## 1.17.4 (2024-04-10)
+
+- fix: restore support for SMS MFA [#803](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/803)
+
+## 1.17.3 (2024-01-03)
+
+- improve compatibility for diffeent platforms [#748](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/748)
+
+## 1.17.2 (2023-12-22)
+
+- fix: module not found [#748](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/748)
+
+## 1.17.1 (2023-12-20)
+
+- fix: main macos binary failing [#668](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/668) [#700](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/700)
+- fix: debian glibc error [#741](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/741)
+
+## 1.17.0 (2023-12-19)
+
+- fix: macos binary failing [#668](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/668) [#700](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/700)
+- fix: 'Invalid email/password combination' exception due to recent iCloud changes [#729](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/729)
+- feature: `--auth-only` parameter to independently create/validate session tokens without listing/downloading photos
+- feature: 2FA validation merged from `pyicloud`
+
+## 1.16.3 (2023-12-04)
+
+- fix: file date attribute [#714](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/714)
+- fix: `icloud --username` parameter reported as not an option [#719](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/719)
+
+## 1.16.2 (2023-09-30)
+
+- fix: send logs to stdout [#697](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/697)
+
+## 1.16.1 (2023-09-27)
+
+- fix: shared libraries throw INTERNAL_ERROR for some users [#690](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/690)
+
+## 1.16.0 (2023-09-25)
+
+- feature: shared library support with `--list-libraries` and `--library` parameters [#455](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/455), [#489](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/489), [#678](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/678)
+
+## 1.15.1 (2023-07-16)
+
+- fix: excessive logging for existing and deduplicated files
+- fix: add missing docker platforms back
+
+## 1.15.0 (2023-07-16)
+
+- fix: logs when progress bar enabled
+- feature: `--dry-run` parameter to run icloudpd without changes to local files and iCloud
+- fix: pypi.org license and description
+
+## 1.14.5 (2023-07-06)
+
+- fix: pypi publishing for macos
+
+## 1.14.4 (2023-07-06)
+
+- fix: docker auth during publishing
+
+## 1.14.3 (2023-07-06)
+
+- add binary wheel without dependencies to pypi
+- fix: remove tests from pypi distributions
+
+## 1.14.2 (2023-07-03)
+
+- fix: finite retry on unhandled errors during photo iteration [#642](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/642)
+- fix: retry on internal error during deletion [#615](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/615)
+
+## 1.14.1 (2023-07-02)
+
+- fix: retry authN on session error during deletion [#647](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/647)
+
+## 1.14.0 (2023-07-01)
+
+- fix: auto-delete date mismatch [#345](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/345)
+- fix: `--version` parameter
+
+## 1.13.4 (2023-06-14)
+
+- experimental: fix npm packaging
+
+## 1.13.4 (2023-06-11)
+
+- experimental: fix npm registry publishing
+
+## 1.13.2 (2023-06-10)
+
+- experimental: fix npm registry publishing
+
+## 1.13.1 (2023-06-10)
+
+- experimental: add support for distributing `icloudpd` with [npm](README_NPM.md) package manager
+
+## 1.13.0 (2023-04-21)
+
+- fix: only delete files successfully downloaded [#614](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/614)
+
+## 1.12.0 (2023-03-10)
+
+- experimental: add macos binary [#551](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/551)
+- fix: add `icloud` script to the source distribution [#594](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/594)
+
+## 1.11.0 (2023-02-24)
+
+- feature: add experimental mode for new cli
+
+## 1.10.0 (2023-02-17)
+
+- feature: add `--watch-with-interval` parameter [#568](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/568)
+- fix: allow spaces in filenames [#378](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/378)
+- feature: add `--notification-email-from` parameter [#496](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/496)
+
+## 1.9.0 (2023-02-10)
+
+- fix: replace invalid chars in filenames with '_' [#378](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/378)
+- feature: add `--domain` parameter to support mainland China [#572](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/572), [#545](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/545)
+- feature: add `linux/arm/v7` and `linux/arm/v6` docker image [#434](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/434)
+
+## 1.8.1 (2023-02-03)
+
+- fix: avoid crash when downloading over legacy `-original` name [#338](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/338)
+- fix: remove mac binary unitl Apple signing is supported [#551](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/551)
+- fix: PyPI distribution [#549](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/549)
+- fix: keyring error [#539](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/539)
+
+## 1.8.0 (2023-01-27)
+
+- update dependencies to solve [#539](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/539)
+- feature: a new command line option `--delete-after-download` to allow user to delete photos in the iCloud right after download is complete. [#431](https://github.com/icloud-photos-downloader/icloud_photos_downloader/pull/431), [#368](https://github.com/icloud-photos-downloader/icloud_photos_downloader/pull/368) [#314](https://github.com/icloud-photos-downloader/icloud_photos_downloader/pull/314) [#124](https://github.com/icloud-photos-downloader/icloud_photos_downloader/pull/124) [#332](https://github.com/icloud-photos-downloader/icloud_photos_downloader/pull/332)
+
+## 1.7.3 (2023-01-20)
+
+- deprecating python 3.6
+- experimental: package `icloudpd` & `icloud` as executables [#146](https://github.com/icloud-photos-downloader/icloud_photos_downloader/issues/146)
 
 ## 1.7.2 (2021-01-16)
 
@@ -10,7 +433,7 @@
 
 ## 1.7.1 (2020-11-15)
 
-- fix: dev docker build on windows correctly manages crlf for scripts
+- fix: dev Docker build on Windows correctly manages crlf for scripts
 
 ## 1.7.1rc1 (2020-11-10)
 
@@ -24,7 +447,7 @@
 so all photos will be placed directly into the download directory.
 - fix: Empty directory structure being created #185
 - feature: removed multi-threaded downloading and added deprecation notice to --threads-num parameter #180, #188
-- fix: documentation issues, first adressed in #141 and seperated contribution
+- fix: documentation issues, first addressed in #141 and separated contribution
 info from README.md into CONTRIBUTING.md
 
 ## 1.6.2 (2020-10-23)

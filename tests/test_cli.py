@@ -1,98 +1,434 @@
-# coding=utf-8
-from unittest import TestCase
-import os
-import shutil
-from vcr import VCR
-import pytest
-from click.testing import CliRunner
-from icloudpd.base import main
+import datetime
 import inspect
+import locale
+import os
+import runpy
+import shutil
+from argparse import ArgumentError
+from typing import Sequence, Tuple
+from unittest import TestCase, mock
 
-vcr = VCR(decode_compressed_response=True)
+import pytest
+from tzlocal import get_localzone
+
+from icloudpd.cli import format_help, parse
+from icloudpd.config import GlobalConfig, UserConfig
+from icloudpd.log_level import LogLevel
+from icloudpd.mfa_provider import MFAProvider
+from icloudpd.password_provider import PasswordProvider
+from pyicloud_ipd.file_match import FileMatchPolicy
+from pyicloud_ipd.live_photo_mov_filename_policy import LivePhotoMovFilenamePolicy
+from pyicloud_ipd.raw_policy import RawTreatmentPolicy
+from pyicloud_ipd.version_size import AssetVersionSize, LivePhotoVersionSize
+from tests.helpers import (
+    path_from_project_root,
+    recreate_path,
+    run_cassette,
+    run_icloudpd_test,
+    run_main,
+)
 
 
 class CliTestCase(TestCase):
     @pytest.fixture(autouse=True)
-    def inject_fixtures(self, caplog):
+    def inject_fixtures(self, caplog: pytest.LogCaptureFixture) -> None:
         self._caplog = caplog
+        self.root_path = path_from_project_root(__file__)
+        self.fixtures_path = os.path.join(self.root_path, "fixtures")
+        self.vcr_path = os.path.join(self.root_path, "vcr_cassettes")
 
-    def test_cli(self):
-        runner = CliRunner()
-        result = runner.invoke(main, ["--help"])
-        assert result.exit_code == 0
+    def test_cli_help(self) -> None:
+        result = format_help()
+        # Test that help output contains key sections and content rather than exact formatting
+        self.assertIn(
+            "usage: icloudpd [GLOBAL] [COMMON] [<USER> [COMMON] <USER> [COMMON] ...]", result
+        )
+        self.assertIn("GLOBAL options. Applied for all user settings.", result)
+        self.assertIn(
+            "COMMON options. If specified before the first username, then used as defaults for settings for all users.",
+            result,
+        )
+        self.assertIn("USER options. Can be specified for setting user configuration only.", result)
 
-    def test_log_levels(self):
-        base_dir = os.path.normpath(f"tests/fixtures/Photos/{inspect.stack()[0][3]}")
-        if not os.path.exists(base_dir):
-            os.makedirs(base_dir)
+        # Test that all major options are present
+        self.assertIn("--help, -h", result)
+        self.assertIn("--version", result)
+        self.assertIn("--username", result)
+        self.assertIn("--directory", result)
+        self.assertIn("--password-provider", result)
+        self.assertIn("--mfa-provider", result)
+        self.assertIn("--size", result)
+        self.assertIn("--live-photo-size", result)
+        self.assertIn("--auth-only", result)
+        self.assertIn("--adp-web-access", result)
+        self.assertIn("--dry-run", result)
 
-        parameters = [
+        # Test that option descriptions are present
+        self.assertIn("Show this information", result)
+        self.assertIn("Show the version, commit hash, and timestamp", result)
+        self.assertIn("Apple ID email address. Starts a new configuration", result)
+        # Directory option exists with proper help text (format varies by Python version)
+        self.assertTrue(
+            "-d, --directory DIRECTORY" in result
+            or "-d DIRECTORY, --directory DIRECTORY" in result,
+            "Expected directory option format not found in help text",
+        )
+        self.assertIn("Local directory to use for downloads", result)
+
+    def test_cli_parser(self) -> None:
+        self.assertEqual.__self__.maxDiff = None  # type: ignore[attr-defined]
+        self.assertEqual(
+            parse(["--help"]),
+            (
+                GlobalConfig(
+                    help=True,
+                    version=False,
+                    use_os_locale=False,
+                    only_print_filenames=False,
+                    log_level=LogLevel.DEBUG,
+                    no_progress_bar=False,
+                    threads_num=1,
+                    domain="com",
+                    watch_with_interval=None,
+                    password_providers=[
+                        PasswordProvider.PARAMETER,
+                        PasswordProvider.KEYRING,
+                        PasswordProvider.CONSOLE,
+                    ],
+                    mfa_provider=MFAProvider.CONSOLE,
+                ),
+                [],
+            ),
+            "--help",
+        )
+        self.assertEqual(
+            parse(["--mfa-provider", "weBui"]),
+            (
+                GlobalConfig(
+                    help=False,
+                    version=False,
+                    use_os_locale=False,
+                    only_print_filenames=False,
+                    log_level=LogLevel.DEBUG,
+                    no_progress_bar=False,
+                    threads_num=1,
+                    domain="com",
+                    watch_with_interval=None,
+                    password_providers=[
+                        PasswordProvider.PARAMETER,
+                        PasswordProvider.KEYRING,
+                        PasswordProvider.CONSOLE,
+                    ],
+                    mfa_provider=MFAProvider.WEBUI,
+                ),
+                [],
+            ),
+            "--mfa-provider weBui",
+        )
+        self.assertEqual(
+            parse(
+                [
+                    "--password-provider",
+                    "weBui",
+                    "--password-provider",
+                    "CoNSoLe",
+                    "--password-provider",
+                    "WeBuI",
+                ]
+            ),
+            (
+                GlobalConfig(
+                    help=False,
+                    version=False,
+                    use_os_locale=False,
+                    only_print_filenames=False,
+                    log_level=LogLevel.DEBUG,
+                    no_progress_bar=False,
+                    threads_num=1,
+                    domain="com",
+                    watch_with_interval=None,
+                    password_providers=[PasswordProvider.WEBUI, PasswordProvider.CONSOLE],
+                    mfa_provider=MFAProvider.CONSOLE,
+                ),
+                [],
+            ),
+            "password-providers",
+        )
+        self.assertEqual(
+            parse(["--version", "--use-os-locale"]),
+            (
+                GlobalConfig(
+                    help=False,
+                    version=True,
+                    use_os_locale=True,
+                    only_print_filenames=False,
+                    log_level=LogLevel.DEBUG,
+                    no_progress_bar=False,
+                    threads_num=1,
+                    domain="com",
+                    watch_with_interval=None,
+                    password_providers=[
+                        PasswordProvider.PARAMETER,
+                        PasswordProvider.KEYRING,
+                        PasswordProvider.CONSOLE,
+                    ],
+                    mfa_provider=MFAProvider.CONSOLE,
+                ),
+                [],
+            ),
+            "--version --use-os-locale",
+        )
+        self.assertEqual(
+            parse(
+                ["--directory", "abc", "--username", "u1", "--username", "u2", "--directory", "def"]
+            ),
+            (
+                GlobalConfig(
+                    help=False,
+                    version=False,
+                    use_os_locale=False,
+                    only_print_filenames=False,
+                    log_level=LogLevel.DEBUG,
+                    no_progress_bar=False,
+                    threads_num=1,
+                    domain="com",
+                    watch_with_interval=None,
+                    password_providers=[
+                        PasswordProvider.PARAMETER,
+                        PasswordProvider.KEYRING,
+                        PasswordProvider.CONSOLE,
+                    ],
+                    mfa_provider=MFAProvider.CONSOLE,
+                ),
+                [
+                    UserConfig(
+                        directory="abc",
+                        username="u1",
+                        auth_only=False,
+                        adp_web_access=False,
+                        cookie_directory="~/.pyicloud",
+                        password=None,
+                        sizes=[AssetVersionSize.ORIGINAL],
+                        live_photo_size=LivePhotoVersionSize.ORIGINAL,
+                        recent=None,
+                        until_found=None,
+                        albums=[],
+                        list_albums=False,
+                        library="PrimarySync",
+                        list_libraries=False,
+                        skip_videos=False,
+                        skip_live_photos=False,
+                        xmp_sidecar=False,
+                        force_size=False,
+                        auto_delete=False,
+                        folder_structure="{:%Y/%m/%d}",
+                        set_exif_datetime=False,
+                        smtp_username=None,
+                        smtp_password=None,
+                        smtp_host="smtp.gmail.com",
+                        smtp_port=587,
+                        smtp_no_tls=False,
+                        notification_email=None,
+                        notification_email_from=None,
+                        notification_script=None,
+                        delete_after_download=False,
+                        keep_icloud_recent_days=None,
+                        dry_run=False,
+                        keep_unicode_in_filenames=False,
+                        live_photo_mov_filename_policy=LivePhotoMovFilenamePolicy.SUFFIX,
+                        align_raw=RawTreatmentPolicy.AS_IS,
+                        file_match_policy=FileMatchPolicy.NAME_SIZE_DEDUP_WITH_SUFFIX,
+                        skip_created_before=None,
+                        skip_created_after=None,
+                        skip_photos=False,
+                    ),
+                    UserConfig(
+                        directory="def",
+                        auth_only=False,
+                        adp_web_access=False,
+                        cookie_directory="~/.pyicloud",
+                        username="u2",
+                        password=None,
+                        sizes=[AssetVersionSize.ORIGINAL],
+                        live_photo_size=LivePhotoVersionSize.ORIGINAL,
+                        recent=None,
+                        until_found=None,
+                        albums=[],
+                        list_albums=False,
+                        library="PrimarySync",
+                        list_libraries=False,
+                        skip_videos=False,
+                        skip_live_photos=False,
+                        xmp_sidecar=False,
+                        force_size=False,
+                        auto_delete=False,
+                        folder_structure="{:%Y/%m/%d}",
+                        set_exif_datetime=False,
+                        smtp_username=None,
+                        smtp_password=None,
+                        smtp_host="smtp.gmail.com",
+                        smtp_port=587,
+                        smtp_no_tls=False,
+                        notification_email=None,
+                        notification_email_from=None,
+                        notification_script=None,
+                        delete_after_download=False,
+                        keep_icloud_recent_days=None,
+                        dry_run=False,
+                        keep_unicode_in_filenames=False,
+                        live_photo_mov_filename_policy=LivePhotoMovFilenamePolicy.SUFFIX,
+                        align_raw=RawTreatmentPolicy.AS_IS,
+                        file_match_policy=FileMatchPolicy.NAME_SIZE_DEDUP_WITH_SUFFIX,
+                        skip_created_before=None,
+                        skip_created_after=None,
+                        skip_photos=False,
+                    ),
+                ],
+            ),
+            "defaults propagated and overwritten",
+        )
+        self.assertEqual(
+            parse(
+                [
+                    "-d",
+                    "abc",
+                    "--username",
+                    "u1",
+                    "--skip-created-before",
+                    "2025-01-02",
+                    "--skip-created-after",
+                    "2d",
+                ]
+            ),
+            (
+                GlobalConfig(
+                    help=False,
+                    version=False,
+                    use_os_locale=False,
+                    only_print_filenames=False,
+                    log_level=LogLevel.DEBUG,
+                    no_progress_bar=False,
+                    threads_num=1,
+                    domain="com",
+                    watch_with_interval=None,
+                    password_providers=[
+                        PasswordProvider.PARAMETER,
+                        PasswordProvider.KEYRING,
+                        PasswordProvider.CONSOLE,
+                    ],
+                    mfa_provider=MFAProvider.CONSOLE,
+                ),
+                [
+                    UserConfig(
+                        directory="abc",
+                        username="u1",
+                        auth_only=False,
+                        adp_web_access=False,
+                        cookie_directory="~/.pyicloud",
+                        password=None,
+                        sizes=[AssetVersionSize.ORIGINAL],
+                        live_photo_size=LivePhotoVersionSize.ORIGINAL,
+                        recent=None,
+                        until_found=None,
+                        albums=[],
+                        list_albums=False,
+                        library="PrimarySync",
+                        list_libraries=False,
+                        skip_videos=False,
+                        skip_live_photos=False,
+                        xmp_sidecar=False,
+                        force_size=False,
+                        auto_delete=False,
+                        folder_structure="{:%Y/%m/%d}",
+                        set_exif_datetime=False,
+                        smtp_username=None,
+                        smtp_password=None,
+                        smtp_host="smtp.gmail.com",
+                        smtp_port=587,
+                        smtp_no_tls=False,
+                        notification_email=None,
+                        notification_email_from=None,
+                        notification_script=None,
+                        delete_after_download=False,
+                        keep_icloud_recent_days=None,
+                        dry_run=False,
+                        keep_unicode_in_filenames=False,
+                        live_photo_mov_filename_policy=LivePhotoMovFilenamePolicy.SUFFIX,
+                        align_raw=RawTreatmentPolicy.AS_IS,
+                        file_match_policy=FileMatchPolicy.NAME_SIZE_DEDUP_WITH_SUFFIX,
+                        skip_created_before=datetime.datetime(
+                            year=2025, month=1, day=2, tzinfo=get_localzone()
+                        ),
+                        skip_created_after=datetime.timedelta(days=2),
+                        skip_photos=False,
+                    ),
+                ],
+            ),
+            "valid skip-created parsed",
+        )
+        with pytest.raises(
+            ArgumentError,
+            match="argument --skip-created-before: Not an ISO timestamp or time interval in days",
+        ):
+            _ = parse(
+                [
+                    "-d",
+                    "abc",
+                    "--username",
+                    "u1",
+                    "--skip-created-before",
+                    "2025-01-33",
+                    "--skip-created-after",
+                    "2d",
+                ]
+            )
+        with pytest.raises(
+            ArgumentError,
+            match="argument --skip-created-after: Not an ISO timestamp or time interval in days",
+        ):
+            _ = parse(
+                [
+                    "-d",
+                    "abc",
+                    "--username",
+                    "u1",
+                    "--skip-created-before",
+                    "2025-01-02",
+                    "--skip-created-after",
+                    "2",
+                ]
+            )
+
+    def test_live_photo_size_choices(self) -> None:
+        for choice, expected in [
+            ("original", LivePhotoVersionSize.ORIGINAL),
+            ("medium", LivePhotoVersionSize.MEDIUM),
+            ("thumb", LivePhotoVersionSize.THUMB),
+        ]:
+            _, user_configs = parse(["-d", "abc", "--username", "u1", "--live-photo-size", choice])
+            self.assertEqual(user_configs[0].live_photo_size, expected, choice)
+
+    def test_cli(self) -> None:
+        result = run_main(["--help"])
+        self.assertEqual(result.exit_code, 0, "exit code")
+
+    def test_log_levels(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+
+        parameters: Sequence[Tuple[str, Sequence[str], Sequence[str]]] = [
             ("debug", ["DEBUG", "INFO"], []),
             ("info", ["INFO"], ["DEBUG"]),
             ("error", [], ["DEBUG", "INFO"]),
         ]
         for log_level, expected, not_expected in parameters:
             self._caplog.clear()
-            with vcr.use_cassette("tests/vcr_cassettes/listing_photos.yml"):
-                # Pass fixed client ID via environment variable
-                runner = CliRunner(env={
-                    "CLIENT_ID": "DE309E26-942E-11E8-92F5-14109FE0B321"
-                })
-                result = runner.invoke(
-                    main,
-                    [
-                        "--username",
-                        "jdoe@gmail.com",
-                        "--password",
-                        "password1",
-                        "--recent",
-                        "0",
-                        "--log-level",
-                        log_level,
-                        "-d",
-                        base_dir,
-                    ],
-                )
-                assert result.exit_code == 0
-            for text in expected:
-                self.assertIn(text, self._caplog.text)
-            for text in not_expected:
-                self.assertNotIn(text, self._caplog.text)
-
-    def test_tqdm(self):
-        base_dir = os.path.normpath(f"tests/fixtures/Photos/{inspect.stack()[0][3]}")
-        if not os.path.exists(base_dir):
-            os.makedirs(base_dir)
-
-        with vcr.use_cassette("tests/vcr_cassettes/listing_photos.yml"):
-            # Force tqdm progress bar via ENV var
-            runner = CliRunner(env={
-                "FORCE_TQDM": "yes",
-                "CLIENT_ID": "DE309E26-942E-11E8-92F5-14109FE0B321"
-            })
-            result = runner.invoke(
-                main,
-                [
-                    "--username",
-                    "jdoe@gmail.com",
-                    "--password",
-                    "password1",
-                    "--recent",
-                    "0",
-                    "-d",
-                    base_dir,
-                ],
-            )
-            assert result.exit_code == 0
-
-    def test_unicode_directory(self):
-        with vcr.use_cassette("tests/vcr_cassettes/listing_photos.yml"):
-            # Pass fixed client ID via environment variable
-            runner = CliRunner(env={
-                "CLIENT_ID": "DE309E26-942E-11E8-92F5-14109FE0B321"
-            })
-            result = runner.invoke(
-                main,
+            _, result = run_icloudpd_test(
+                self.assertEqual,
+                self.root_path,
+                base_dir,
+                "listing_photos.yml",
+                [],
+                [],
                 [
                     "--username",
                     "jdoe@gmail.com",
@@ -101,21 +437,89 @@ class CliTestCase(TestCase):
                     "--recent",
                     "0",
                     "--log-level",
-                    "info",
-                    "-d",
-                    "tests/fixtures/相片",
+                    log_level,
                 ],
             )
-            assert result.exit_code == 0
+            self.assertEqual(result.exit_code, 0, "exit code")
+            for text in expected:
+                self.assertIn(text, self._caplog.text)
+            for text in not_expected:
+                self.assertNotIn(text, self._caplog.text)
 
-    def test_missing_directory(self):
-        base_dir = os.path.normpath(f"tests/fixtures/Photos/{inspect.stack()[0][3]}")
+    def test_tqdm(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+
+        _, result = run_icloudpd_test(
+            self.assertEqual,
+            self.root_path,
+            base_dir,
+            "listing_photos.yml",
+            [],
+            [],
+            [
+                "--username",
+                "jdoe@gmail.com",
+                "--password",
+                "password1",
+                "--recent",
+                "0",
+            ],
+            additional_env={"FORCE_TQDM": "yes"},
+        )
+        self.assertEqual(result.exit_code, 0, "exit code")
+
+    def test_unicode_directory(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+
+        _, result = run_icloudpd_test(
+            self.assertEqual,
+            self.root_path,
+            base_dir,
+            "listing_photos.yml",
+            [],
+            [],
+            [
+                "--username",
+                "jdoe@gmail.com",
+                "--password",
+                "password1",
+                "--recent",
+                "0",
+                "--log-level",
+                "info",
+            ],
+        )
+        self.assertEqual(result.exit_code, 0, "exit code")
+
+    def test_use_os_locale_applies_the_system_locale(self) -> None:
+        with mock.patch("locale.setlocale") as setlocale:
+            result = run_main(["--use-os-locale", "--version"])
+        setlocale.assert_called_once_with(locale.LC_ALL, "")
+        self.assertEqual(result.exit_code, 0)
+
+    def test_use_os_locale_with_missing_locale(self) -> None:
+        """A LANG/LC_ALL that isn't installed gives a warning, not a crash (#1400)"""
+        with mock.patch("locale.setlocale", side_effect=locale.Error("unsupported locale setting")):
+            result = run_main(["--use-os-locale", "--version"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("version:", result.output)
+        self.assertIn(
+            "Cannot use the system locale (unsupported locale setting), using the default locale",
+            result.stderr_bytes.decode("utf-8"),
+        )
+
+    def test_missing_directory(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+        # need path removed
         if os.path.exists(base_dir):
             shutil.rmtree(base_dir)
+        # keep cookies out of base_dir (and out of ~/.pyicloud)
+        cookie_dir = base_dir + "_cookie"
+        recreate_path(cookie_dir)
 
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
+        # replay a failed login instead of signing in to Apple's real servers
+        result = run_cassette(
+            os.path.join(self.vcr_path, "failed_auth.yml"),
             [
                 "--username",
                 "jdoe@gmail.com",
@@ -125,16 +529,19 @@ class CliTestCase(TestCase):
                 "0",
                 "--log-level",
                 "info",
+                "--cookie-directory",
+                cookie_dir,
                 "-d",
-                base_dir
+                base_dir,
             ],
         )
-        assert result.exit_code == 2
+        self.assertEqual(result.exit_code, 2, "exit code")
 
-    def test_missing_directory_param(self):
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
+        self.assertFalse(os.path.exists(base_dir), f"{base_dir} exists")
+
+    def test_missing_directory_param(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+        result = run_main(
             [
                 "--username",
                 "jdoe@gmail.com",
@@ -146,4 +553,135 @@ class CliTestCase(TestCase):
                 "info",
             ],
         )
-        assert result.exit_code == 2
+        self.assertEqual(result.exit_code, 2, "exit code")
+
+        self.assertFalse(os.path.exists(base_dir), f"{base_dir} exists")
+
+    def test_conflict_options_delete_after_download_and_auto_delete(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+        result = run_main(
+            [
+                "--username",
+                "jdoe@gmail.com",
+                "--password",
+                "password1",
+                "-d",
+                "/tmp",
+                "--delete-after-download",
+                "--auto-delete",
+            ],
+        )
+        self.assertEqual(result.exit_code, 2, "exit code")
+
+        self.assertFalse(os.path.exists(base_dir), f"{base_dir} exists")
+
+    def test_conflict_options_delete_after_download_and_keep_icloud_recent_days(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+        result = run_main(
+            [
+                "--username",
+                "jdoe@gmail.com",
+                "--password",
+                "password1",
+                "-d",
+                "/tmp",
+                "--delete-after-download",
+                "--keep-icloud-recent-days",
+                "1",
+            ],
+        )
+        self.assertEqual(result.exit_code, 2, "exit code")
+
+        self.assertFalse(os.path.exists(base_dir), f"{base_dir} exists")
+
+    def test_conflict_options_auto_delete_and_keep_icloud_recent_days(self) -> None:
+        """Assets --keep-icloud-recent-days moves to Recently Deleted would also be deleted locally (#1272)"""
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+        for days in ["90", "0"]:
+            with self.subTest(days=days):
+                result = run_main(
+                    [
+                        "--username",
+                        "jdoe@gmail.com",
+                        "--password",
+                        "password1",
+                        "-d",
+                        "/tmp",
+                        "--auto-delete",
+                        "--keep-icloud-recent-days",
+                        days,
+                    ],
+                )
+                self.assertEqual(result.exit_code, 2, "exit code")
+                self.assertIn(
+                    "--keep-icloud-recent-days and --auto-delete should not be used together",
+                    result.output,
+                )
+
+        self.assertFalse(os.path.exists(base_dir), f"{base_dir} exists")
+
+    def test_conflict_options_skip_created_before_later_than_after(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+        result = run_main(
+            [
+                "--username",
+                "jdoe@gmail.com",
+                "--password",
+                "password1",
+                "-d",
+                "/tmp",
+                "--skip-created-before",
+                "2025-10-01",
+                "--skip-created-after",
+                "2025-04-01",
+            ],
+        )
+        self.assertEqual(result.exit_code, 2, "exit code")
+        self.assertIn(
+            "--skip-created-before must be earlier than --skip-created-after", result.output
+        )
+
+        self.assertFalse(os.path.exists(base_dir), f"{base_dir} exists")
+
+    def test_conflict_options_skip_created_before_later_than_after_interval(self) -> None:
+        base_dir = os.path.join(self.fixtures_path, inspect.stack()[0][3])
+        result = run_main(
+            [
+                "--username",
+                "jdoe@gmail.com",
+                "--password",
+                "password1",
+                "-d",
+                "/tmp",
+                "--skip-created-before",
+                "10d",
+                "--skip-created-after",
+                "20d",
+            ],
+        )
+        self.assertEqual(result.exit_code, 2, "exit code")
+
+        self.assertFalse(os.path.exists(base_dir), f"{base_dir} exists")
+
+    def test_starter_propagates_exit_code(self) -> None:
+        """Entry script used for binaries must pass cli() return code to sys.exit"""
+        starter_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), os.pardir, "src", "starters", "icloudpd.py"
+        )
+        with (
+            mock.patch(
+                "sys.argv",
+                [
+                    "icloudpd",
+                    "--username",
+                    "jdoe@gmail.com",
+                    "-d",
+                    "/tmp",
+                    "--skip-videos",
+                    "--skip-photos",
+                ],
+            ),
+            self.assertRaises(SystemExit) as context,
+        ):
+            runpy.run_path(starter_path, run_name="__main__")
+        self.assertEqual(context.exception.code, 2, "exit code")

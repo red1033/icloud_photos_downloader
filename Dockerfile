@@ -1,38 +1,53 @@
-# This image is mainly used for development and testing
-
-FROM python:3.9 as base
-
+FROM alpine:3.23 AS runtime_amd64_none
+ENV MUSL_LOCPATH="/usr/share/i18n/locales/musl"
+RUN apk update && apk add --no-cache tzdata musl-locales musl-locales-lang
 WORKDIR /app
-# explicit requirements because runtime does not need ALL dependencies
-COPY requirements-pip.txt .
-COPY requirements.txt .
-RUN pip3 install -r requirements-pip.txt
-RUN pip3 install -r requirements.txt
+COPY dist/icloud-*.*.*-linux-musl-amd64 icloud
+COPY dist/icloudpd-*.*.*-linux-musl-amd64 icloudpd
 
-FROM base as common
-RUN apt-get update && apt-get install -y dos2unix
-RUN mkdir Photos
-COPY requirements*.txt ./
-COPY scripts/install_deps scripts/install_deps
-RUN dos2unix scripts/install_deps
-RUN scripts/install_deps
-COPY . .
-RUN dos2unix scripts/*
-ENV TZ="America/Los_Angeles"
+FROM alpine:3.23 AS runtime_arm64_none
+ENV MUSL_LOCPATH="/usr/share/i18n/locales/musl"
+RUN apk update && apk add --no-cache tzdata musl-locales musl-locales-lang
+WORKDIR /app
+COPY dist/icloud-*.*.*-linux-musl-arm64 icloud
+COPY dist/icloudpd-*.*.*-linux-musl-arm64 icloudpd
 
-FROM common as test
+FROM alpine:3.23 AS runtime_arm_v7
+ENV MUSL_LOCPATH="/usr/share/i18n/locales/musl"
+RUN apk update && apk add --no-cache tzdata musl-locales musl-locales-lang
+WORKDIR /app
+COPY dist/icloud-*.*.*-linux-musl-arm32v7 icloud
+COPY dist/icloudpd-*.*.*-linux-musl-arm32v7 icloudpd
 
-RUN scripts/test
-RUN scripts/lint
+FROM runtime_${TARGETARCH}_${TARGETVARIANT:-none} AS runtime
+ENV TZ=UTC
+EXPOSE 8080
+WORKDIR /app
+RUN chmod +x /app/icloud /app/icloudpd
 
-FROM common as build
+# Use a shell script to allow command selection
+COPY <<EOF /app/entrypoint.sh
+#!/bin/sh
+# If first argument is 'icloud' or 'icloudpd', run the corresponding binary
+case "\$1" in
+    icloud)
+        shift
+        exec /app/icloud "\$@"
+        ;;
+    icloudpd)
+        shift
+        exec /app/icloudpd "\$@"
+        ;;
+    *)
+        echo "Error: You must specify either 'icloud' or 'icloudpd' as the first argument."
+        echo "Usage: docker run <image> icloudpd [options]"
+        echo "   or: docker run <image> icloud [options]"
+        exit 1
+        ;;
+esac
+EOF
 
-RUN scripts/build
+RUN chmod +x /app/entrypoint.sh
 
-FROM python:3.9-alpine as runtime
-
-COPY --from=build /app/dist/* /tmp
-RUN pip3 install /tmp/*.whl
-
-# copy from test to ensure test stage runs before runtime stage in buildx
-COPY --from=test /app/.coverage .
+# Default entrypoint allows command selection
+ENTRYPOINT ["/app/entrypoint.sh"]
